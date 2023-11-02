@@ -1,6 +1,10 @@
 #include "try.h"
 #include <signal.h>
 
+#define MAX(a, b) (a > b ? a : b)
+#define MIN(a, b) (a < b ? a : b)
+#define lli long long int
+
 char *exec_path;
 uintptr_t base_addr;
 
@@ -9,6 +13,8 @@ Elf32_Phdr *phdr;
 int fd;
 
 int page_fault = 0;
+int page_allocations = 0;
+lli fragmentation = 0;
 
 int entry;
 int num_load_phdr = 0;
@@ -23,29 +29,6 @@ typedef struct
     int data[MAX_PAGES];
 } Segment;
 
-int max(int a, int b)
-{
-    if (a < b)
-    {
-        return b;
-    }
-    else
-    {
-        return a;
-    }
-}
-
-int min(int a, int b)
-{
-    if (a < b)
-    {
-        return a;
-    }
-    else
-    {
-        return b;
-    }
-}
 Segment *segments;
 
 void load_page_data(Segment *segment, char *exec_path, char *page, uintptr_t addr)
@@ -54,7 +37,7 @@ void load_page_data(Segment *segment, char *exec_path, char *page, uintptr_t add
     int exec_fd = open(exec_path, O_RDONLY);
     lseek(exec_fd, segment->offset + num_page * PAGE_SIZE, SEEK_SET);
     char *temp = (char *)malloc(PAGE_SIZE * sizeof(char));
-    int rd = read(exec_fd, temp, min(PAGE_SIZE, max(0, segment->file_size - num_page * PAGE_SIZE)));
+    int rd = read(exec_fd, temp, MIN(PAGE_SIZE, MAX(0, segment->file_size - num_page * PAGE_SIZE)));
     memcpy(page, temp, rd);
     close(exec_fd);
     free(temp);
@@ -68,12 +51,19 @@ static void segv_handler(int signum, siginfo_t *info, void *context)
     }
     void *fault_addr = info->si_addr;
     Segment *segment;
+    int found = 0;
     for (int i = 0; i < num_load_phdr; i++)
     {
         if (fault_addr >= (void *)segments[i].vaddr && fault_addr < (void *)(segments[i].vaddr + segments[i].mem_size))
         {
             segment = &segments[i];
+            found = 1;
+            break;
         }
+    }
+    if (found == 0)
+    {
+        old_state.sa_sigaction(signum, info, context);
     }
     unsigned int offset_v_addr = (uintptr_t)info->si_addr - segment->vaddr;
     unsigned int current_page = offset_v_addr / PAGE_SIZE;
@@ -84,6 +74,7 @@ static void segv_handler(int signum, siginfo_t *info, void *context)
     }
     page_fault++;
     void *page = mmap((void *)segment->vaddr + current_page * PAGE_SIZE, PAGE_SIZE, PROT_WRITE, MAP_SHARED | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+    page_allocations++;
     load_page_data(segment, exec_path, page, (uintptr_t)info->si_addr);
     mprotect(page, PAGE_SIZE, segment->perm);
     segment->data[current_page] = 1;
@@ -140,17 +131,19 @@ void load_and_run_elf(char **exe)
             Segment *seg = &segments[j];
             seg->perm = 0;
             if (phdr[i].p_flags & PF_X)
-                seg->perm |= 0x4;
+                seg->perm |= 4;
             if (phdr[i].p_flags & PF_R)
-                seg->perm |= 0x1;
+                seg->perm |= 1;
             if (phdr[i].p_flags & PF_W)
-                seg->perm |= 0x2;
+                seg->perm |= 2;
             seg->vaddr = (((phdr[i].p_vaddr) + ((PAGE_SIZE)-1)) & -PAGE_SIZE);
             seg->offset = phdr[i].p_offset - (phdr[i].p_vaddr - seg->vaddr);
             seg->mem_size = phdr[i].p_memsz + (phdr[i].p_vaddr - seg->vaddr);
             seg->file_size = phdr[i].p_filesz + (phdr[i].p_vaddr - seg->vaddr);
             memset(seg[i].data, 0, MAX_PAGES * sizeof(int));
-
+            int num_pages = (seg->mem_size % PAGE_SIZE == 0) ? (seg->mem_size / PAGE_SIZE) : (seg->mem_size / PAGE_SIZE) + 1;
+            lli fragment = num_pages * PAGE_SIZE - seg->mem_size;
+            fragmentation += fragment;
             if (seg->vaddr < base_addr)
                 base_addr = seg->vaddr;
             j++;
@@ -160,6 +153,8 @@ void load_and_run_elf(char **exe)
     int result = _start();
     printf("User _start return value = %d\n", result);
     printf("Page faults: %d\n", page_fault);
+    printf("Page Allocations: %d\n", page_fault);
+    printf("Total internal fragmentations: %f KB\n", (double)fragmentation / PAGE_SIZE);
 }
 
 void initialise_signal()
