@@ -24,8 +24,8 @@ typedef struct
     uintptr_t vaddr;
     size_t mem_size;
     off_t offset;
-    unsigned int perm;
-    unsigned int file_size;
+    int perm;
+    int file_size;
     int data[MAX_PAGES];
 } Segment;
 
@@ -47,6 +47,7 @@ static void segv_handler(int signum, siginfo_t *info, void *context)
 {
     if (info->si_code == SEGV_ACCERR)
     {
+        printf("Permission Denied: ");
         old_state.sa_sigaction(signum, info, context);
     }
     void *fault_addr = info->si_addr;
@@ -63,13 +64,15 @@ static void segv_handler(int signum, siginfo_t *info, void *context)
     }
     if (found == 0)
     {
+        printf("Memory out of bounds: ");
         old_state.sa_sigaction(signum, info, context);
     }
-    unsigned int offset_v_addr = (uintptr_t)info->si_addr - segment->vaddr;
-    unsigned int current_page = offset_v_addr / PAGE_SIZE;
+    int offset = (uintptr_t)info->si_addr - segment->vaddr;
+    int current_page = offset / PAGE_SIZE;
     int pg = segment->data[current_page];
     if (pg != 0)
     {
+        printf("Fault in submitted code: ");
         old_state.sa_sigaction(signum, info, context);
     }
     page_fault++;
