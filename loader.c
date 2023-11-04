@@ -1,7 +1,6 @@
 #include "try.h"
 
 char *exec_path;
-uintptr_t base_addr;
 
 Elf32_Ehdr *ehdr;
 Elf32_Phdr *phdr;
@@ -64,7 +63,7 @@ void segv_handler(int signum, siginfo_t *info, void *context)
     // iterating through the loaded segments to check the bounds for required address
     for (int i = 0; i < num_load_phdr; i++)
     {
-        if (fault_addr >= (void *)segments[i].vaddr && fault_addr < (void *)(segments[i].vaddr + segments[i].mem_size))
+        if (fault_addr >= (void *)segments[i].vaddr && fault_addr <= (void *)(segments[i].vaddr + segments[i].mem_size))
         {
             segment = &segments[i];
             found = 1;
